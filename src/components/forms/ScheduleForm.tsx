@@ -1,5 +1,5 @@
 "use client";
-import { useForm } from "react-hook-form";
+import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 
@@ -12,25 +12,22 @@ import {
   FormLabel,
   FormMessage,
 } from "../ui/form";
-import { Input } from "../ui/input";
+
 import { Button } from "../ui/button";
-import Link from "next/link";
-import { Textarea } from "../ui/textarea";
-import { Switch } from "../ui/switch";
-import { createEvent, deleteEvent, updateEvent } from "@/server/events";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "../ui/alert-dialog";
-import { useState, useTransition } from "react";
+
+import { createEvent, updateEvent } from "@/server/events";
+
 import { DAYS_OF_WEEK_IN_ORDER } from "@/data/constants";
+import { scheduleFormSchema } from "@/schema/schedule";
+
+import { timeToInt } from "@/lib/utils";
+import { SelectTrigger } from "@radix-ui/react-select";
+import { Select, SelectContent, SelectItem, SelectValue } from "../ui/select";
+import { formatTimezoneOffset } from "@/lib/formatters";
+import { Fragment, useState } from "react";
+import { Plus, X } from "lucide-react";
+import { Input } from "../ui/input";
+import { saveSchedule } from "@/server/actions/schedule";
 
 type Availability = {
   startTime: string;
@@ -46,25 +43,41 @@ export default function ScheduleForm({
     availabilities: Availability[];
   };
 }) {
-  const [isDeletePending, startDeleteTransition] = useTransition();
-
+  const [successMessage, setSuccessMessage] = useState<string>();
   const form = useForm<z.infer<typeof scheduleFormSchema>>({
     resolver: zodResolver(scheduleFormSchema),
-    defaultValues: event ?? {
-      isActive: true,
-      durationInMinutes: 30,
+    defaultValues: {
+      timezone:
+        schedule?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+      availabilities: schedule?.availabilities.toSorted((a, b) => {
+        return timeToInt(a.startTime) - timeToInt(b.startTime);
+      }),
     },
   });
 
+  const {
+    append: addAvailability,
+    remove: removeAvailability,
+    fields: availabilityFields,
+  } = useFieldArray({
+    name: "availabilities",
+    control: form.control,
+  });
+
+  const groupAvailabilityFields = Object.groupBy(
+    availabilityFields.map((filed, index) => ({ ...filed, index })),
+    (availability) => availability.dayOfWeek
+  );
+
   async function onSubmit(values: z.infer<typeof scheduleFormSchema>) {
-    const action =
-      event == null ? createEvent : updateEvent.bind(null, event.id);
-    const data = await action(values);
+    const data = await saveSchedule(values);
 
     if (data?.error) {
       form.setError("root", {
-        message: "There was an error saving your event",
+        message: "There was an error saving your schedule",
       });
+    } else {
+      setSuccessMessage("Schedule saved!");
     }
     console.log(values);
   }
@@ -80,15 +93,29 @@ export default function ScheduleForm({
             {form.formState.errors.root.message}
           </div>
         )}
+        {successMessage && (
+          <div className="text-green-500 text-sm">{successMessage}</div>
+        )}
         <FormField
           control={form.control}
-          name="name"
+          name="timezone"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Name</FormLabel>
-              <FormControl>
-                <Input {...field} />
-              </FormControl>
+              <FormLabel>Timezone </FormLabel>
+              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                <FormControl className="border border-slate-300 p-1 rounded-sm">
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  {Intl.supportedValuesOf("timeZone").map((timezone) => (
+                    <SelectItem key={timezone} value={timezone}>
+                      {timezone} {` ${formatTimezoneOffset(timezone)}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <FormDescription>
                 The name users will see when booking
               </FormDescription>
@@ -96,104 +123,103 @@ export default function ScheduleForm({
             </FormItem>
           )}
         />
-        <FormField
-          control={form.control}
-          name="durationInMinutes"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Duration</FormLabel>
-              <FormControl>
-                <Input type="number" {...field} />
-              </FormControl>
-              <FormDescription>In minutes</FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="description"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Description</FormLabel>
-              <FormControl>
-                <Textarea className="resize-none h-32" {...field} />
-              </FormControl>
-              <FormDescription>
-                Optional description of the event
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="isActive"
-          render={({ field }) => (
-            <FormItem>
-              <div className="flex items-center gap-2">
-                <FormControl>
-                  <Switch
-                    checked={field.value}
-                    onCheckedChange={field.onChange}
-                  />
-                </FormControl>
-                <FormLabel>Active</FormLabel>
+        <div className="grid grid-cols-[auto,1fr] gap-y-6 gap-x-4 ">
+          {DAYS_OF_WEEK_IN_ORDER.map((dayOfWeek) => (
+            <Fragment key={dayOfWeek}>
+              <div className="capitalize text-sm font-semibold">
+                {dayOfWeek.substring(0, 3)}
               </div>
-
-              <FormDescription>
-                Inactive event will not be visible for users to book
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <div className="flex gap-2 justify-end">
-          {event && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
+              <div className="flex flex-col gap-2">
                 <Button
-                  variant="destructiveGhost"
-                  disabled={isDeletePending || form.formState.isSubmitting}
+                  type="button"
+                  className="size-6 p-1 "
+                  variant="outline"
+                  onClick={() => {
+                    addAvailability({
+                      dayOfWeek,
+                      startTime: "9:00",
+                      endTime: "17:00",
+                    });
+                  }}
                 >
-                  Delete
+                  <Plus className="size-full" />
                 </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                </AlertDialogHeader>
-                <AlertDialogDescription>
-                  This action cannot be undone. This will permanently delete
-                  your this event
-                </AlertDialogDescription>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    disabled={isDeletePending || form.formState.isSubmitting}
-                    variant="destructive"
-                    onClick={() => {
-                      startDeleteTransition(async () => {
-                        const data = await deleteEvent(event.id);
-
-                        if (data?.error) {
-                          form.setError("root", {
-                            message: "There was an error deleting your event",
-                          });
+                {groupAvailabilityFields[dayOfWeek]?.map(
+                  (field, labelIndex) => (
+                    <div className="flex flex-col gap-1" key={field.id}>
+                      <div className="flex gap-2 items-center">
+                        <FormField
+                          control={form.control}
+                          name={`availabilities.${field.index}.startTime`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormControl>
+                                <Input
+                                  className="w-24"
+                                  aria-label={`${dayOfWeek} Start Time ${labelIndex}`}
+                                  {...field}
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                        -
+                        <FormField
+                          control={form.control}
+                          name={`availabilities.${field.index}.endTime`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormControl>
+                                <Input
+                                  className="w-24"
+                                  aria-label={`${dayOfWeek} End Time ${labelIndex}`}
+                                  {...field}
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                        <Button
+                          type="button"
+                          className="size-6 p-1"
+                          variant="destructiveGhost"
+                          onClick={() => removeAvailability(field.index)}
+                        >
+                          <X />
+                        </Button>
+                      </div>
+                      <FormMessage>
+                        {
+                          form.formState.errors.availabilities?.at?.(
+                            field.index
+                          )?.root?.message
                         }
-                      });
-                    }}
-                  >
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
-          <Button type="button" asChild variant="outline">
-            <Link href={"/events"}>Cancel</Link>
+                      </FormMessage>
+                      <FormMessage>
+                        {
+                          form.formState.errors.availabilities?.at?.(
+                            field.index
+                          )?.startTime?.message
+                        }
+                      </FormMessage>
+                      <FormMessage>
+                        {
+                          form.formState.errors.availabilities?.at?.(
+                            field.index
+                          )?.endTime?.message
+                        }
+                      </FormMessage>
+                    </div>
+                  )
+                )}
+              </div>
+            </Fragment>
+          ))}
+        </div>
+        <div className="flex gap-2 justify-end">
+          <Button disabled={form.formState.isSubmitting} type="submit">
+            Save
           </Button>
-          <Button type="submit">Save</Button>
         </div>
       </form>
     </Form>
