@@ -9,10 +9,11 @@ import {
 } from "@/components/ui/card";
 import { db } from "@/drizzle/db";
 import { formatEventDescription } from "@/lib/formatters";
-import { cn } from "@/lib/utils";
 import { clerkClient } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+
+export const revalidate = 0;
 
 export default async function BookingPage({
   params: { clerkUserId },
@@ -35,9 +36,8 @@ export default async function BookingPage({
         {fullName}
       </div>
       <div className="text-muted-foreground mb-6 max-w-sm mx-auto text-center">
-        Lorem ipsum, dolor sit amet consectetur adipisicing elit. Alias ut
-        eligendi consequatur nesciunt. Sit magnam dolores necessitatibus magni
-        nobis reiciendis.
+        Welcome to my scheduling page. Please follow the instructions to add an
+        event to my calendar.
       </div>
       <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(300px,1fr))]">
         {events.map((event) => (
@@ -50,22 +50,22 @@ export default async function BookingPage({
 
 type EventCardProps = {
   id: string;
-  clerkUserId: string;
   name: string;
+  clerkUserId: string;
   description: string | null;
   durationInMinutes: number;
 };
 
 function EventCard({
   id,
-  clerkUserId,
   name,
   description,
+  clerkUserId,
   durationInMinutes,
 }: EventCardProps) {
   return (
     <Card className="flex flex-col">
-      <CardHeader className="opacity-50">
+      <CardHeader>
         <CardTitle>{name}</CardTitle>
         <CardDescription>
           {formatEventDescription(durationInMinutes)}
